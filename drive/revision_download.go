@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"path/filepath"
 	"time"
 )
 
@@ -51,16 +50,12 @@ func (self *Drive) DownloadRevision(args DownloadRevisionArgs) (err error) {
 		out = ioutil.Discard
 	}
 
-	// Path to file
-	fpath := filepath.Join(args.Path, rev.OriginalFilename)
-
-	fmt.Fprintf(out, "Downloading %s -> %s\n", rev.OriginalFilename, fpath)
-
 	bytes, rate, err := self.saveFile(saveFileArgs{
 		out:           args.Out,
 		body:          timeoutReaderWrapper(res.Body),
 		contentLength: res.ContentLength,
-		fpath:         fpath,
+		fpath:         args.Path,
+		fname:         rev.OriginalFilename,
 		force:         args.Force,
 		stdout:        args.Stdout,
 		progress:      args.Progress,

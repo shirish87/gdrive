@@ -7,6 +7,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"io"
 	"text/tabwriter"
+	"strings"
 )
 
 type ListFilesArgs struct {
@@ -113,7 +114,22 @@ func PrintFileList(args PrintFileListArgs) {
 		fmt.Fprintln(w, "Id\tName\tType\tSize\tCreated")
 	}
 
+	serenityFiles, err := getSerenityFiles("")
+	serenityMap := make(map[string]Fi)
+	if err == nil {
+		for _, sf := range serenityFiles {
+			if sf.Scrambled {
+				serenityMap[strings.ToLower(sf.Title)] = sf
+			}
+		}
+	}
+
 	for _, f := range args.Files {
+		sf := serenityMap[strings.ToLower(f.Name)]
+		if sf.Name != "" {
+			f.Name = sf.Name
+		}
+
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			f.Id,
 			truncateString(f.Name, args.NameWidth),

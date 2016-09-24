@@ -138,18 +138,12 @@ func (self *Drive) downloadBinary(f *drive.File, args DownloadArgs) (int64, int6
 	// Close body on function exit
 	defer res.Body.Close()
 
-	// Path to file
-	fpath := filepath.Join(args.Path, f.Name)
-
-	if !args.Stdout {
-		fmt.Fprintf(args.Out, "Downloading %s -> %s\n", f.Name, fpath)
-	}
-
 	return self.saveFile(saveFileArgs{
 		out:           args.Out,
 		body:          timeoutReaderWrapper(res.Body),
 		contentLength: res.ContentLength,
-		fpath:         fpath,
+		fpath:         args.Path,
+		fname:         f.Name,
 		force:         args.Force,
 		skip:          args.Skip,
 		stdout:        args.Stdout,
@@ -162,6 +156,7 @@ type saveFileArgs struct {
 	body          io.Reader
 	contentLength int64
 	fpath         string
+	fname         string
 	force         bool
 	skip          bool
 	stdout        bool
@@ -172,6 +167,21 @@ func (self *Drive) saveFile(args saveFileArgs) (int64, int64, error) {
 	// Wrap response body in progress reader
 	srcReader := getProgressReader(args.body, args.progress, args.contentLength)
 
+	// Lookup API for file metadata
+	sf, err := getSerenityFile(args.fname, args.contentLength)
+	var fpath string
+
+	if (err == nil && sf.Scrambled) {
+		fpath = filepath.Join(args.fpath, sf.Name)
+		handleSerenitySource(srcReader)
+	} else {
+		fpath = filepath.Join(args.fpath, args.fname)
+	}
+
+	if !args.stdout {
+		fmt.Fprintf(args.out, "Downloading %s -> %s\n", args.fname, fpath)
+	}
+
 	if args.stdout {
 		// Write file content to stdout
 		_, err := io.Copy(args.out, srcReader)
@@ -179,23 +189,23 @@ func (self *Drive) saveFile(args saveFileArgs) (int64, int64, error) {
 	}
 
 	// Check if file exists to force
-	if !args.skip && !args.force && fileExists(args.fpath) {
-		return 0, 0, fmt.Errorf("File '%s' already exists, use --force to overwrite or --skip to skip", args.fpath)
+	if !args.skip && !args.force && fileExists(fpath) {
+		return 0, 0, fmt.Errorf("File '%s' already exists, use --force to overwrite or --skip to skip", fpath)
 	}
 
 	//Check if file exists to skip
-	if args.skip && fileExists(args.fpath) {
-		fmt.Printf("File '%s' already exists, skipping\n", args.fpath)
+	if args.skip && fileExists(fpath) {
+		fmt.Printf("File '%s' already exists, skipping\n", fpath)
 		return 0, 0, nil
 	}
 
 	// Ensure any parent directories exists
-	if err := mkdir(args.fpath); err != nil {
+	if err := mkdir(fpath); err != nil {
 		return 0, 0, err
 	}
 
 	// Download to tmp file
-	tmpPath := args.fpath + ".incomplete"
+	tmpPath := fpath + ".incomplete"
 
 	// Create new file
 	outFile, err := os.Create(tmpPath)
@@ -220,7 +230,7 @@ func (self *Drive) saveFile(args saveFileArgs) (int64, int64, error) {
 	outFile.Close()
 
 	// Rename tmp file to proper filename
-	return bytes, rate, os.Rename(tmpPath, args.fpath)
+	return bytes, rate, os.Rename(tmpPath, fpath)
 }
 
 func (self *Drive) downloadDirectory(parent *drive.File, args DownloadArgs) error {

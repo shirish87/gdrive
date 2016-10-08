@@ -123,6 +123,14 @@ func fileExists(path string) bool {
 	return false
 }
 
+func fileSize(path string) (int64, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 func mkdir(path string) error {
 	dir := filepath.Dir(path)
 	if fileExists(dir) {

@@ -18,6 +18,7 @@ type Fi struct {
 	Id          string
 	Name        string
 	Title       string
+	Url         string
 	FileSize    int64
 	Scrambled   bool
 }

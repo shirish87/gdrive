@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
+	"strconv"
 
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
@@ -169,9 +171,10 @@ func (self *Drive) saveFile(args saveFileArgs) (int64, int64, error) {
 
 	// Lookup API for file metadata
 	sf, err := getSerenityFile(args.fname, args.contentLength)
+	isSerenityFile := (err == nil)
 	var fpath string
 
-	if (err == nil && sf.Scrambled) {
+	if (isSerenityFile && sf.Scrambled) {
 		fpath = filepath.Join(args.fpath, sf.Name)
 		handleSerenitySource(srcReader)
 	} else {
@@ -206,6 +209,13 @@ func (self *Drive) saveFile(args saveFileArgs) (int64, int64, error) {
 
 	// Download to tmp file
 	tmpPath := fpath + ".incomplete"
+	if isSerenityFile && fileExists(tmpPath) {
+		bytes, rate, err := resumeSaveFile(args, tmpPath, sf)
+		if err == nil {
+			os.Rename(tmpPath, fpath)
+			return bytes, rate, err
+		}
+	}
 
 	// Create new file
 	outFile, err := os.Create(tmpPath)
@@ -219,7 +229,11 @@ func (self *Drive) saveFile(args saveFileArgs) (int64, int64, error) {
 	bytes, err := io.Copy(outFile, srcReader)
 	if err != nil {
 		outFile.Close()
-		os.Remove(tmpPath)
+
+		if !isSerenityFile {
+			os.Remove(tmpPath)
+		}
+
 		return 0, 0, fmt.Errorf("Failed saving file: %s", err)
 	}
 
@@ -267,4 +281,58 @@ func isDir(f *drive.File) bool {
 
 func isBinary(f *drive.File) bool {
 	return f.Md5Checksum != ""
+}
+
+func resumeSaveFile(args saveFileArgs, tmpPath string, sf Fi) (int64, int64, error) {
+	outFile, err := os.OpenFile(tmpPath, os.O_APPEND|os.O_WRONLY, 0666)
+	if err != nil {
+		return 0, 0, fmt.Errorf("Unable to append to file: %s", err)
+	}
+
+	fmt.Printf("Attempting resume on file '%s'\n", tmpPath)
+	if fsize, err := fileSize(tmpPath); err == nil && fsize > 0 {
+		started := time.Now()
+		bytesToSkip := SerenityHeaderLen + fsize
+		bytes := sf.FileSize - bytesToSkip
+		if bytes == 0 {
+			return 0, 0, nil
+		}
+
+		if bytes > 0 {
+			skipFlag := "--start-pos=" + strconv.FormatInt(bytesToSkip, 10)
+			fmt.Printf("Skipping %d bytes in remote file\n", bytesToSkip)
+			cmd := exec.Command("wget", skipFlag, "-O", "-", sf.Url)
+			cmd.Stderr = args.out
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				return 0, 0, err
+			}
+
+			err = cmd.Start()
+			if err != nil {
+				return 0, 0, err
+			}
+
+			defer cmd.Wait()
+
+			// Append STDOUT to existing .incomplete file
+			bytes, err = io.Copy(outFile, stdout)
+
+			// Calculate average download rate
+			rate := calcRate(bytes, started, time.Now())
+
+			// Close File
+			outFile.Close()
+
+			// Rename tmp file to proper filename
+			return bytes, rate, nil
+		}
+	}
+
+	// Close File
+	outFile.Close()
+
+	// Delete File
+	os.Remove(tmpPath)
+	return 0, 0, fmt.Errorf("Failed to resume download")
 }
